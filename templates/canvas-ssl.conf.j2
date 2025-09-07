@@ -1,0 +1,22 @@
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+    ServerName {{ canvas_domain }}
+    DocumentRoot /var/canvas/public
+    PassengerRuby /usr/bin/ruby
+    PassengerAppEnv production
+    RailsEnv production
+    SSLEngine On
+    SSLCertificateFile {{ ssl_certificate_file }}
+    SSLCertificateKeyFile {{ ssl_certificate_key_file }}
+    Include /etc/letsencrypt/options-ssl-apache.conf
+    <Directory /var/canvas/public>
+        AllowOverride all
+        Options -MultiViews
+        Require all granted
+    </Directory>
+    XSendFile On
+    XSendFilePath /var/canvas
+    ProxyPass /api/session http://localhost:3001/api/session
+    ProxyPassReverse /api/session http://localhost:3001/api/session
+</VirtualHost>
+</IfModule>

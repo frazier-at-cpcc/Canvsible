@@ -1,0 +1,507 @@
+---
+- name: Deploy Canvas LMS on Ubuntu 22.04
+  hosts: canvas_servers
+  become: yes
+  vars_files:
+    - vars/canvas_vars.yml
+  
+  tasks:
+    - name: Create canvas user
+      user:
+        name: canvas
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+        password: "{{ canvas_user_password | password_hash('sha512') }}"
+
+    - name: Install PostgreSQL repository and key
+      block:
+        - name: Install wget and ca-certificates
+          apt:
+            name:
+              - wget
+              - ca-certificates
+            state: present
+            update_cache: yes
+
+        - name: Add PostgreSQL signing key
+          apt_key:
+            url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+            state: present
+
+        - name: Add PostgreSQL repository
+          apt_repository:
+            repo: "deb http://apt.postgresql.org/pub/repos/apt/ {{ ansible_distribution_release }}-pgdg main"
+            state: present
+
+    - name: Install PostgreSQL 14
+      apt:
+        name: postgresql-14
+        state: present
+        update_cache: yes
+
+    - name: Create PostgreSQL canvas user
+      postgresql_user:
+        name: canvas
+        password: "{{ postgres_canvas_password }}"
+        role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+      become_user: postgres
+
+    - name: Create Canvas databases
+      postgresql_db:
+        name: "{{ item }}"
+        owner: canvas
+        state: present
+      become_user: postgres
+      loop:
+        - canvas_production
+        - canvas_development
+
+    - name: Create PostgreSQL user for current user
+      postgresql_user:
+        name: "{{ ansible_user }}"
+        role_attr_flags: SUPERUSER
+      become_user: postgres
+
+    - name: Install system dependencies
+      apt:
+        name:
+          - git-core
+          - software-properties-common
+          - zlib1g-dev
+          - libxml2-dev
+          - libsqlite3-dev
+          - postgresql
+          - libpq-dev
+          - libxmlsec1-dev
+          - libidn11-dev
+          - curl
+          - make
+          - g++
+          - libyaml-dev
+          - cmdtest
+        state: present
+
+    - name: Add Ruby PPA
+      apt_repository:
+        repo: ppa:instructure/ruby
+        state: present
+
+    - name: Install Ruby 3.3
+      apt:
+        name:
+          - ruby3.3
+          - ruby3.3-dev
+        state: present
+        update_cache: yes
+
+    - name: Install Node.js via NVM
+      become_user: canvas
+      shell: |
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+        source ~/.bashrc
+        nvm install 18.20
+      args:
+        executable: /bin/bash
+        creates: /home/canvas/.nvm/versions/node/v18.20.0
+
+    - name: Install Yarn
+      become_user: canvas
+      shell: |
+        curl -o- -L https://yarnpkg.com/install.sh | bash -s -- --version 1.19.1
+      args:
+        executable: /bin/bash
+        creates: /home/canvas/.yarn/bin/yarn
+
+    - name: Clone Canvas LMS repository
+      git:
+        repo: https://github.com/instructure/canvas-lms.git
+        dest: /var/canvas
+        version: prod
+        force: yes
+
+    - name: Change Canvas directory ownership
+      file:
+        path: /var/canvas
+        owner: canvas
+        group: canvas
+        recurse: yes
+
+    - name: Copy Canvas configuration files from examples
+      copy:
+        src: "/var/canvas/config/{{ item }}.yml.example"
+        dest: "/var/canvas/config/{{ item }}.yml"
+        remote_src: yes
+        owner: canvas
+        group: canvas
+        mode: '0600'
+      loop:
+        - amazon_s3
+        - database
+        - delayed_jobs
+        - vault_contents
+        - domain
+        - file_store
+        - outgoing_mail
+        - security
+        - external_migration
+        - dynamic_settings
+        - cache_store
+        - redis
+
+    - name: Configure database settings
+      template:
+        src: templates/database.yml.j2
+        dest: /var/canvas/config/database.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Configure dynamic settings
+      template:
+        src: templates/dynamic_settings.yml.j2
+        dest: /var/canvas/config/dynamic_settings.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Configure outgoing mail
+      template:
+        src: templates/outgoing_mail.yml.j2
+        dest: /var/canvas/config/outgoing_mail.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Configure domain settings
+      template:
+        src: templates/domain.yml.j2
+        dest: /var/canvas/config/domain.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Configure security settings
+      template:
+        src: templates/security.yml.j2
+        dest: /var/canvas/config/security.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Install bundler
+      gem:
+        name: bundler
+        version: 2.5.10
+        state: present
+
+    - name: Configure bundle path
+      become_user: canvas
+      shell: bundle config set --local path vendor/bundle
+      args:
+        chdir: /var/canvas
+
+    - name: Install Ruby dependencies
+      become_user: canvas
+      shell: |
+        source ~/.bashrc
+        bundle install
+      args:
+        chdir: /var/canvas
+        executable: /bin/bash
+
+    - name: Update specific gems
+      gem:
+        name: "{{ item.name }}"
+        version: "{{ item.version }}"
+        state: present
+      loop:
+        - { name: strscan, version: latest }
+        - { name: stringio, version: "3.1.1" }
+        - { name: base64, version: "0.2.0" }
+
+    - name: Install Node.js dependencies
+      become_user: canvas
+      shell: |
+        source ~/.bashrc
+        export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
+        yarn install
+      args:
+        chdir: /var/canvas
+        executable: /bin/bash
+
+    - name: Move problematic migration files
+      become_user: canvas
+      shell: |
+        mv db/migrate/20210823222355_change_immersive_reader_allowed_on_to_on.rb .
+        mv db/migrate/20210812210129_add_singleton_column.rb db/migrate/20111111214311_add_singleton_column.rb
+      args:
+        chdir: /var/canvas
+
+    - name: Build Canvas assets
+      become_user: canvas
+      shell: |
+        source ~/.bashrc
+        export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
+        yarn gulp rev
+      args:
+        chdir: /var/canvas
+        executable: /bin/bash
+
+    - name: Run database initial setup
+      become_user: canvas
+      shell: |
+        source ~/.bashrc
+        RAILS_ENV=production bundle exec rake db:initial_setup
+      args:
+        chdir: /var/canvas
+        executable: /bin/bash
+
+    - name: Move migration file back
+      become_user: canvas
+      shell: mv 20210823222355_change_immersive_reader_allowed_on_to_on.rb db/migrate/
+      args:
+        chdir: /var/canvas
+
+    - name: Run database migrations
+      become_user: canvas
+      shell: |
+        source ~/.bashrc
+        RAILS_ENV=production bundle exec rake db:migrate
+      args:
+        chdir: /var/canvas
+        executable: /bin/bash
+
+    - name: Create necessary directories and files
+      become_user: canvas
+      shell: |
+        mkdir -p log tmp/pids public/assets app/stylesheets/brandable_css_brands
+        touch app/stylesheets/_brandable_variables_defaults_autogenerated.scss Gemfile.lock log/production.log
+      args:
+        chdir: /var/canvas
+
+    - name: Compile Canvas assets
+      become_user: canvas
+      shell: |
+        source ~/.bashrc
+        RAILS_ENV=production bundle exec rake canvas:compile_assets
+      args:
+        chdir: /var/canvas
+        executable: /bin/bash
+
+    - name: Install Apache and Passenger
+      apt:
+        name:
+          - apache2
+          - dirmngr
+          - gnupg
+          - apt-transport-https
+          - ca-certificates
+        state: present
+
+    - name: Add Passenger repository key
+      apt_key:
+        keyserver: hkp://keyserver.ubuntu.com:80
+        id: 561F9B9CAC40B2F7
+
+    - name: Add Passenger repository
+      apt_repository:
+        repo: "deb https://oss-binaries.phusionpassenger.com/apt/passenger {{ ansible_distribution_release }} main"
+        state: present
+
+    - name: Install Passenger module
+      apt:
+        name: libapache2-mod-passenger
+        state: present
+        update_cache: yes
+
+    - name: Enable Apache modules
+      apache2_module:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - rewrite
+        - passenger
+        - ssl
+        - proxy_http
+
+    - name: Configure Passenger
+      template:
+        src: templates/passenger.conf.j2
+        dest: /etc/apache2/mods-available/passenger.conf
+        backup: yes
+      notify: restart apache
+
+    - name: Install Certbot
+      apt:
+        name:
+          - certbot
+          - python3-certbot-apache
+        state: present
+
+    - name: Remove default Apache sites
+      file:
+        path: "/etc/apache2/sites-enabled/{{ item }}"
+        state: absent
+      loop:
+        - 000-default.conf
+        - default-ssl.conf
+        - 000-default-le-ssl.conf
+
+    - name: Create Canvas Apache configuration
+      template:
+        src: templates/canvas.conf.j2
+        dest: /etc/apache2/sites-available/canvas.conf
+      notify: restart apache
+
+    - name: Create Canvas SSL Apache configuration
+      template:
+        src: templates/canvas-ssl.conf.j2
+        dest: /etc/apache2/sites-available/canvas-ssl.conf
+      notify: restart apache
+
+    - name: Enable Canvas sites
+      apache2_site:
+        name: "{{ item }}"
+        state: enabled
+      loop:
+        - canvas.conf
+        - canvas-ssl.conf
+      notify: restart apache
+
+    - name: Install Redis
+      block:
+        - name: Add Redis PPA
+          apt_repository:
+            repo: ppa:chris-lea/redis-server
+            state: present
+
+        - name: Install Redis
+          apt:
+            name: redis-server
+            state: present
+            update_cache: yes
+
+        - name: Start and enable Redis
+          systemd:
+            name: redis-server
+            state: started
+            enabled: yes
+
+    - name: Configure Canvas cache store
+      template:
+        src: templates/cache_store.yml.j2
+        dest: /var/canvas/config/cache_store.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Configure Canvas Redis
+      template:
+        src: templates/redis.yml.j2
+        dest: /var/canvas/config/redis.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Clone Canvas RCE API
+      git:
+        repo: https://github.com/instructure/canvas-rce-api.git
+        dest: /var/canvas-rce-api
+        force: yes
+
+    - name: Change RCE API directory ownership
+      file:
+        path: /var/canvas-rce-api
+        owner: canvas
+        group: canvas
+        recurse: yes
+
+    - name: Install RCE API dependencies
+      become_user: canvas
+      shell: |
+        source ~/.bashrc
+        export PATH="$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$PATH"
+        npm install --production
+        npm audit fix
+      args:
+        chdir: /var/canvas-rce-api
+        executable: /bin/bash
+
+    - name: Configure RCE API environment
+      template:
+        src: templates/rce-env.j2
+        dest: /var/canvas-rce-api/.env
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Configure Canvas vault contents
+      template:
+        src: templates/vault_contents.yml.j2
+        dest: /var/canvas/config/vault_contents.yml
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Setup Canvas init script
+      file:
+        src: /var/canvas/script/canvas_init
+        dest: /etc/init.d/canvas_init
+        state: link
+
+    - name: Enable Canvas init script
+      shell: update-rc.d canvas_init defaults
+
+    - name: Start Canvas services
+      shell: /etc/init.d/canvas_init start
+
+    - name: Configure UFW firewall rules
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop:
+        - '80'
+        - '443'
+        - '5432'
+        - '3001'
+        - '3000'
+        - '6379'
+        - '8000'
+        - 'ssh'
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+
+    - name: Install X-Sendfile module
+      apt:
+        name: libapache2-mod-xsendfile
+        state: present
+
+    - name: Create production-local.rb configuration
+      template:
+        src: templates/production-local.rb.j2
+        dest: /var/canvas/config/environments/production-local.rb
+        owner: canvas
+        group: canvas
+        mode: '0600'
+
+    - name: Set correct file permissions on config directory
+      file:
+        path: /var/canvas/config
+        owner: canvas
+        group: canvas
+        recurse: yes
+        mode: '0400'
+
+    - name: Install screen for RCE API
+      apt:
+        name: screen
+        state: present
+
+  handlers:
+    - name: restart apache
+      service:
+        name: apache2
+        state: restarted

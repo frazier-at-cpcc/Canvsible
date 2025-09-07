@@ -1,0 +1,14 @@
+production:
+  'sts/testaccount/sts/canvas-shards-lookupper-dev':
+    access_key: 'fake-access-key'
+    secret_key: 'fake-secret-key'
+    security_token: 'fake-security-token'
+  'sts/testaccount/sts/canvas-release-notes':
+    access_key: 'fake-access-key'
+    secret_key: 'fake-secret-key'
+    security_token: 'fake-security-token'
+  'app-canvas/data/secrets':
+    data:
+      canvas_security:
+        encryption_secret: "{{ ecosystem_key }}"
+        signing_secret: "{{ ecosystem_secret }}"

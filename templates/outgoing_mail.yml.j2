@@ -1,0 +1,11 @@
+production:
+  address: "{{ smtp_server }}"
+  port: "{{ smtp_port }}"
+  enable_starttls_auto: false
+  ssl: true
+  user_name: "{{ smtp_username }}"
+  password: "{{ smtp_password }}"
+  authentication: cram_md5
+  domain: "{{ smtp_server }}"
+  outgoing_address: "{{ smtp_from_email }}"
+  default_name: "{{ smtp_from_name }}"

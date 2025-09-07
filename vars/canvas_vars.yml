@@ -1,0 +1,35 @@
+---
+# Canvas User Configuration
+canvas_user_password: "changeme123"  # Change this to a secure password
+
+# PostgreSQL Configuration
+postgres_canvas_password: "canvas_db_password"  # Change this to a secure password
+
+# Domain Configuration
+canvas_domain: "your-domain.com"  # Replace with your actual domain
+
+# SMTP Configuration for Email
+smtp_server: "smtp.gmail.com"
+smtp_port: "465"
+smtp_username: "your-email@gmail.com"
+smtp_password: "your-app-password"
+smtp_from_email: "your-email@gmail.com"
+smtp_from_name: "Canvas LMS"
+
+# SSL Certificate paths (will be set after running certbot)
+ssl_certificate_file: "/etc/letsencrypt/live/{{ canvas_domain }}/fullchain.pem"
+ssl_certificate_key_file: "/etc/letsencrypt/live/{{ canvas_domain }}/privkey.pem"
+
+# Canvas Security Settings
+canvas_encryption_key: "{{ lookup('password', '/tmp/canvas_encryption_key chars=ascii_letters,digits length=40') }}"
+
+# RCE API Configuration
+flickr_api_key: "your-flickr-api-key"
+youtube_api_key: "your-youtube-api-key"
+ecosystem_secret: "{{ lookup('password', '/tmp/ecosystem_secret chars=ascii_letters,digits length=32') }}"
+ecosystem_key: "{{ lookup('password', '/tmp/ecosystem_key chars=ascii_letters,digits length=32') }}"
+cipher_password: "{{ lookup('password', '/tmp/cipher_password chars=hexdigits length=32') }}"
+
+# Database Configuration
+database_host: "localhost"
+database_port: "5432"

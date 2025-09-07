@@ -1,0 +1,26 @@
+production:
+  adapter: postgresql
+  encoding: utf8
+  database: canvas_production
+  host: {{ database_host }}
+  username: canvas
+  password: {{ postgres_canvas_password }}
+  timeout: 5000
+
+development:
+  adapter: postgresql
+  encoding: utf8
+  database: canvas_development
+  host: {{ database_host }}
+  username: canvas
+  password: {{ postgres_canvas_password }}
+  timeout: 5000
+
+test:
+  adapter: postgresql
+  encoding: utf8
+  database: canvas_test
+  host: {{ database_host }}
+  username: canvas
+  password: {{ postgres_canvas_password }}
+  timeout: 5000

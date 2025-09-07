@@ -1,0 +1,12 @@
+production:
+  # tree
+  config:
+    canvas:
+      encryption-secret: "{{ canvas_encryption_key }}"
+      signing-secret: "{{ canvas_encryption_key }}"
+    
+  rich-content-service:
+    # if you're running canvas-rce-api on its own
+    app-host: "{{ canvas_domain }}"
+    # if you're running canvas-rce-api with docker-compose/rce-api.override.yml in .env
+    # app-host: "http://rce.canvas.docker:3000"
